@@ -1,1 +1,1 @@
-# workload-identity-federation-aks.
+# workload-identity-federation-aks

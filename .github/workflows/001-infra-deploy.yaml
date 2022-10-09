@@ -1,0 +1,71 @@
+name: 001-infra-deploy
+
+on:
+  workflow_dispatch:
+
+env:
+  LOCATION: "Germany West Central"
+  RESOURCE_GROUP: "rg-aks-wi-01"
+  KV_NAME: "kv-aks-weu-004"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  infra-rg:
+    name: infra-rg
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GitHub Actions
+        uses: actions/checkout@v2
+
+      - name: "Az CLI login"
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: "Create resource groups"
+        run: |
+          az group create --location "${{ env.LOCATION }}" -n "${{ env.RESOURCE_GROUP }}"
+
+  infra-mgt:
+    name: infra
+    runs-on: ubuntu-latest
+    needs: infra-rg
+    steps:
+      - name: Checkout GitHub Actions
+        uses: actions/checkout@v2
+
+      - name: "Az CLI login"
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: "Create AKS"
+        run: |
+          az extension add --name aks-preview
+          az extension update --name aks-preview
+          az aks create --resource-group "${{ env.RESOURCE_GROUP }}" --name aks-wi-01 --location "${{ env.LOCATION }}" --node-count 1 --node-vm-size Standard_DS2_v2 --generate-ssh-keys --enable-oidc-issuer --node-osdisk-size 30 --node-osdisk-type Ephemeral --enable-workload-identity
+
+      - name: "Create key vault"
+        run: |
+          az keyvault create --name "${{ env.KV_NAME }}" --resource-group "${{ env.RESOURCE_GROUP }}" --location "${{ env.LOCATION }}" --enable-rbac-authorization
+          
+      - name: "Set RBAC on key vault 1"
+        run: |
+          export IDENTITYGROUPID=$(az ad group show --group "KeyVaultAdmins" --query "id" --output tsv)
+          
+          # Key Vault Administrator role on key vault resource
+          az role assignment create \
+              --role "Key Vault Administrator" \
+              --assignee $IDENTITYGROUPID \
+              --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/"${{ env.RESOURCE_GROUP }}"/providers/Microsoft.KeyVault/vaults/${{ env.KV_NAME }}"
+              
+      - name: "Create secret"
+        run: |
+          az keyvault secret set --name db-pass --vault-name "${{ env.KV_NAME }}" --value 'mysupersecretpassword'
